@@ -23,6 +23,7 @@ apre una pagina e funziona, anche in piu' persone contemporaneamente.
     static/tv.html         pagina per la TV
     static/pad.html        pagina per lo smartphone
     state.json             lista corrente (creato al primo avvio)
+    cad/                   supporto stampabile in 3D per il tablet
     install/setup-pi.sh    installazione automatica sul Raspberry Pi
     install/               unit systemd, script kiosk, configurazione access point
 
