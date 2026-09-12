@@ -1,0 +1,9 @@
+# Stato di esercizio: cambia a ogni ordine, non va versionato.
+state.json
+state.json.tmp
+
+# Sistema / editor
+__pycache__/
+*.py[cod]
+.DS_Store
+*.swp

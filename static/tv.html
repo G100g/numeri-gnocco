@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numeri pronti</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #151c25;
+    --tile: #202a36;
+    --text: #f4f7fb;
+    --muted: #7f8fa3;
+    --accent: #ffc107;
+    --accent-ink: #241c00;
+    --ok: #3ddc84;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    cursor: none;
+  }
+  #app { display: flex; height: 100%; gap: 1.6vh; padding: 1.6vh; }
+
+  /* ---- pannello ultimo numero pronto ---- */
+  #latest {
+    flex: 0 0 33%;
+    background: var(--panel); border-radius: 2.4vh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  #latest.flash { animation: flash 1.1s ease-out 3; }
+  @keyframes flash {
+    0%, 100% { background: var(--panel); }
+    50%      { background: #2b2200; }
+  }
+  .label {
+    font-size: 2.9vh; letter-spacing: 0.3em; text-transform: uppercase;
+    color: var(--muted); padding-left: 0.3em;
+  }
+  #latest .label { margin-bottom: 1vh; }
+  #latestValue {
+    font-size: 28vh; font-weight: 800; line-height: 0.9;
+    color: var(--accent); font-variant-numeric: tabular-nums;
+  }
+  #latestValue.empty { color: var(--muted); font-size: 11vh; font-weight: 600; }
+
+  /* ---- colonna destra: pronti sopra, in preparazione sotto ---- */
+  #right { flex: 1; display: flex; flex-direction: column; gap: 1.6vh; min-width: 0; }
+  .zone {
+    background: var(--panel); border-radius: 2.4vh; padding: 2.2vh 2.4vh;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  #readyZone   { flex: 3; }
+  #pendingZone { flex: 2; }
+  .zone .label { margin-bottom: 1.6vh; }
+  #readyZone .label { color: var(--ok); }
+
+  .grid {
+    flex: 1; display: grid; gap: 1.2vh; align-content: start;
+    grid-template-columns: repeat(auto-fill, minmax(16vh, 1fr));
+    overflow: hidden; min-height: 0;
+  }
+  .num {
+    background: var(--tile); border-radius: 1.4vh;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-variant-numeric: tabular-nums;
+    padding: 1vh 0.4vh;
+    animation: pop 0.35s ease-out;
+  }
+  #readyGrid .num { background: var(--ok); color: #06301a; }
+  #readyGrid .num.latest { background: var(--accent); color: var(--accent-ink); }
+  #pendingGrid .num { color: var(--muted); }
+  @keyframes pop { from { transform: scale(0.7); opacity: 0; } }
+
+  .empty { flex: 1; display: flex; align-items: center; color: var(--muted); font-size: 3vh; }
+
+  #offline {
+    position: fixed; bottom: 1.6vh; right: 2vh;
+    background: #b3261e; color: #fff; font-size: 2.2vh; font-weight: 700;
+    padding: 0.9vh 1.8vh; border-radius: 1vh; display: none;
+  }
+  #offline.show { display: block; }
+</style>
+</head>
+<body>
+<div id="app">
+  <section id="latest">
+    <div class="label">Pronto</div>
+    <div id="latestValue" class="empty">—</div>
+  </section>
+
+  <div id="right">
+    <section class="zone" id="readyZone">
+      <div class="label">Da ritirare</div>
+      <div class="grid" id="readyGrid"></div>
+      <div class="empty" id="readyEmpty" hidden>Nessun ordine pronto</div>
+    </section>
+    <section class="zone" id="pendingZone">
+      <div class="label">In preparazione</div>
+      <div class="grid" id="pendingGrid"></div>
+      <div class="empty" id="pendingEmpty" hidden>Nessun ordine in coda</div>
+    </section>
+  </div>
+</div>
+<div id="offline">CONNESSIONE PERSA</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var latestBox = $('latest'), latestValue = $('latestValue'), offline = $('offline');
+  var lastVersion = -1, lastReady = null;
+
+  // I numeri devono restare leggibili sia con 3 ordini che con 40:
+  // il corpo del testo si riduce al crescere della coda.
+  function fontFor(count, big) {
+    var scale = big ? 1 : 0.72;
+    var base = count <= 6 ? 10 : count <= 12 ? 8.5 : count <= 24 ? 6.5 : count <= 40 ? 5 : 4;
+    return (base * scale) + 'vh';
+  }
+
+  function fillGrid(grid, emptyEl, numbers, big, highlight) {
+    grid.innerHTML = '';
+    var size = fontFor(numbers.length, big);
+    numbers.slice().sort(function (a, b) { return a - b; }).forEach(function (n) {
+      var el = document.createElement('div');
+      el.className = 'num' + (n === highlight ? ' latest' : '');
+      el.style.fontSize = size;
+      el.textContent = n;
+      grid.appendChild(el);
+    });
+    emptyEl.hidden = numbers.length > 0;
+    grid.style.display = numbers.length ? 'grid' : 'none';
+  }
+
+  function render(state) {
+    if (state.version === lastVersion) return;
+    lastVersion = state.version;
+
+    fillGrid($('readyGrid'), $('readyEmpty'), state.ready, true, state.last_ready);
+    fillGrid($('pendingGrid'), $('pendingEmpty'), state.pending, false, null);
+
+    if (state.last_ready === null || state.last_ready === undefined) {
+      latestValue.textContent = '—';
+      latestValue.classList.add('empty');
+    } else {
+      latestValue.textContent = state.last_ready;
+      latestValue.classList.remove('empty');
+    }
+
+    // Squilla e lampeggia solo quando un ordine diventa pronto:
+    // gli inserimenti alla cassa non devono disturbare i clienti.
+    if (state.last_ready !== lastReady && state.last_ready != null) {
+      latestBox.classList.remove('flash');
+      void latestBox.offsetWidth;           // forza il restart dell'animazione
+      latestBox.classList.add('flash');
+      beep();
+    }
+    lastReady = state.last_ready;
+  }
+
+  // Segnale acustico sintetizzato, senza file audio da caricare.
+  var audioCtx = null;
+  function beep() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      var osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      osc.frequency.setValueAtTime(1320, audioCtx.currentTime + 0.13);
+      gain.gain.setValueAtTime(0.22, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.42);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.45);
+    } catch (e) { /* audio non disponibile: amen */ }
+  }
+
+  function connect() {
+    var es = new EventSource('/events');
+    es.onmessage = function (ev) {
+      offline.classList.remove('show');
+      try { render(JSON.parse(ev.data)); } catch (e) {}
+    };
+    es.onopen = function () { offline.classList.remove('show'); };
+    es.onerror = function () {
+      offline.classList.add('show');
+      es.close();
+      setTimeout(connect, 2000);          // la TV deve tornare su da sola
+    };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

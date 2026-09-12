@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""Display numeri ordini - server.
+
+Ogni ordine ha due stati: "in preparazione" (inserito alla cassa) e "pronto"
+(da ritirare al banco). Il passaggio a pronto e' cio' che squilla e lampeggia
+sulla TV.
+
+Espone:
+  GET  /tv          pagina a schermo intero per la TV
+  GET  /pad         pagina di controllo per lo smartphone
+  GET  /events      stream SSE con lo stato corrente
+  POST /api/add     {"number": 42}                 -> in preparazione
+  POST /api/ready   {"number": 42, "ready": true}  -> pronto / torna indietro
+  POST /api/remove  {"number": 42}                 -> ritirato, via dal display
+  POST /api/clear   {}
+  GET  <altro>      redirect a /pad (captive portal)
+
+Solo standard library: gira su qualsiasi Raspberry Pi OS senza pip install.
+"""
+
+import json
+import os
+import queue
+import threading
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+STATIC = os.path.join(HERE, "static")
+STATE_FILE = os.path.join(HERE, "state.json")
+
+PORT = int(os.environ.get("PORT", "8080"))
+MAX_NUMBER = 9999
+HEARTBEAT_SECONDS = 15
+
+
+class State:
+    """Ordini in corso, persistiti su disco.
+
+    `orders` conserva l'ordine di inserimento: [{"n": 42, "ready": False}, ...]
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        self.orders = []
+        self.last_ready = None      # ultimo numero passato a "pronto"
+        self.version = 0
+        self.subscribers = []
+        self._load()
+
+    # ------------------------------------------------------------ persistenza
+
+    def _load(self):
+        try:
+            with open(self.path) as fh:
+                data = json.load(fh)
+            orders = []
+            for item in data.get("orders", []):
+                orders.append({"n": int(item["n"]), "ready": bool(item.get("ready"))})
+            self.orders = orders
+            self.last_ready = data.get("last_ready")
+        except (OSError, ValueError, TypeError, KeyError):
+            self.orders = []
+            self.last_ready = None
+
+    def _save(self):
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                json.dump({"orders": self.orders, "last_ready": self.last_ready}, fh)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass  # un disco pieno non deve fermare il servizio
+
+    # ------------------------------------------------------------------ stato
+
+    def snapshot(self):
+        return {
+            "pending": [o["n"] for o in self.orders if not o["ready"]],
+            "ready": [o["n"] for o in self.orders if o["ready"]],
+            "last_ready": self.last_ready,
+            "version": self.version,
+        }
+
+    def _find(self, number):
+        for o in self.orders:
+            if o["n"] == number:
+                return o
+        return None
+
+    def add(self, number):
+        with self.lock:
+            if self._find(number) is not None:
+                return False, "gia_presente"
+            self.orders.append({"n": number, "ready": False})
+            self._commit()
+        return True, None
+
+    def set_ready(self, number, ready):
+        with self.lock:
+            order = self._find(number)
+            if order is None:
+                return False, "non_trovato"
+            order["ready"] = ready
+            if ready:
+                self.last_ready = number
+            elif self.last_ready == number:
+                self.last_ready = None
+            self._commit()
+        return True, None
+
+    def remove(self, number):
+        with self.lock:
+            order = self._find(number)
+            if order is None:
+                return False, "non_trovato"
+            self.orders.remove(order)
+            if self.last_ready == number:
+                self.last_ready = None
+            self._commit()
+        return True, None
+
+    def clear(self):
+        with self.lock:
+            self.orders = []
+            self.last_ready = None
+            self._commit()
+        return True, None
+
+    # -------------------------------------------------------------- broadcast
+
+    def _commit(self):
+        """Da chiamare con il lock gia' acquisito."""
+        self.version += 1
+        self._save()
+        payload = self.snapshot()
+        for q in list(self.subscribers):
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                pass
+
+    def subscribe(self):
+        q = queue.Queue(maxsize=32)
+        with self.lock:
+            self.subscribers.append(q)
+            q.put_nowait(self.snapshot())
+        return q
+
+    def unsubscribe(self, q):
+        with self.lock:
+            if q in self.subscribers:
+                self.subscribers.remove(q)
+
+
+STATE = State(STATE_FILE)
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "NumeriGnocco/1.0"
+
+    def log_message(self, fmt, *args):
+        if self.path != "/events":
+            super().log_message(fmt, *args)
+
+    # ---------------------------------------------------------------- helpers
+
+    def _send_json(self, obj, status=200):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_file(self, name, content_type):
+        try:
+            with open(os.path.join(STATIC, name), "rb") as fh:
+                body = fh.read()
+        except OSError:
+            self._send_json({"error": "not_found"}, 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _read_json(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return {}
+        if length <= 0 or length > 4096:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length).decode())
+        except (ValueError, UnicodeDecodeError):
+            return {}
+
+    def _parse_number(self, data):
+        """Restituisce (numero, errore)."""
+        try:
+            number = int(data.get("number"))
+        except (TypeError, ValueError):
+            return None, "numero_non_valido"
+        if not 0 < number <= MAX_NUMBER:
+            return None, "fuori_intervallo"
+        return number, None
+
+    def _reply(self, ok, err):
+        self._send_json({"ok": ok, "error": err, "state": STATE.snapshot()})
+
+    # -------------------------------------------------------------- endpoints
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path in ("/", "/pad", "/pad.html"):
+            self._send_file("pad.html", "text/html; charset=utf-8")
+        elif path in ("/tv", "/tv.html"):
+            self._send_file("tv.html", "text/html; charset=utf-8")
+        elif path == "/events":
+            self._stream_events()
+        elif path == "/api/state":
+            self._send_json(STATE.snapshot())
+        elif path.startswith("/api/"):
+            self._send_json({"error": "not_found"}, 404)
+        else:
+            # Captive portal: Android, iOS e Windows chiamano un URL di prova per
+            # capire se la rete ha internet. Rispondendo con un redirect invece
+            # che con il 204 atteso, il telefono mostra la notifica "accedi alla
+            # rete": un tap e si apre il tastierino, senza digitare indirizzi.
+            self._redirect("/pad")
+
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        data = self._read_json()
+
+        if path == "/api/clear":
+            STATE.clear()
+            self._reply(True, None)
+            return
+
+        if path not in ("/api/add", "/api/ready", "/api/remove"):
+            self._send_json({"error": "not_found"}, 404)
+            return
+
+        number, err = self._parse_number(data)
+        if err:
+            self._send_json({"ok": False, "error": err}, 400)
+            return
+
+        if path == "/api/add":
+            ok, err = STATE.add(number)
+        elif path == "/api/ready":
+            ok, err = STATE.set_ready(number, bool(data.get("ready", True)))
+        else:
+            ok, err = STATE.remove(number)
+        self._reply(ok, err)
+
+    def _stream_events(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        q = STATE.subscribe()
+        try:
+            while True:
+                try:
+                    payload = q.get(timeout=HEARTBEAT_SECONDS)
+                    chunk = "data: %s\n\n" % json.dumps(payload)
+                except queue.Empty:
+                    chunk = ": ping\n\n"   # tiene viva la connessione
+                self.wfile.write(chunk.encode())
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            STATE.unsubscribe(q)
+
+
+def main():
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    server.daemon_threads = True
+    print("Numeri Gnocco in ascolto sulla porta %d" % PORT)
+    print("  TV      -> http://localhost:%d/tv" % PORT)
+    print("  Comando -> http://<ip-del-pi>:%d/pad" % PORT)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nArresto.")
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    main()

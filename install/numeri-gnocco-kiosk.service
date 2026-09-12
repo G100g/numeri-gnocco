@@ -1,0 +1,23 @@
+[Unit]
+Description=Numeri Gnocco - browser sulla TV
+After=numeri-gnocco.service
+Wants=numeri-gnocco.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/numeri-gnocco
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=HOME=/home/pi
+ExecStart=/home/pi/numeri-gnocco/install/kiosk.sh
+Restart=always
+RestartSec=5
+# Serve per disegnare sullo schermo senza X server.
+SupplementaryGroups=video render input tty
+StandardInput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=multi-user.target
