@@ -42,10 +42,10 @@ Lo Zero 2 W ha 512 MB di RAM: un desktop completo con Chromium ci sta stretto e
 va in swap. Per questo il kiosk usa `cog` (WPE WebKit), che disegna direttamente
 sullo schermo via DRM senza X server. Sotto i 100 MB di RAM in esercizio.
 
-Altri modelli: un Pi 3/4/5 fa girare Chromium senza problemi, e
-`install/kiosk.sh` ripiega da solo su Chromium se `cog` non e' installato
-(oppure forzalo con `USE_CHROMIUM=1`). Il Pi Zero senza "W" non ha il WiFi e non
-e' utilizzabile.
+Altri modelli: un Pi 3/4/5 va benissimo, con `cog` o con Chromium
+(`USE_CHROMIUM=1`). Vedi *Note per il Raspberry Pi 4* piu' sotto: ha due porte
+HDMI e un renderer DRM diverso, quindi qualche dettaglio cambia. Il Pi Zero
+senza "W" non ha il WiFi e non e' utilizzabile.
 
 ## Installazione sul Raspberry Pi
 
@@ -95,6 +95,30 @@ oppure aggiungi una seconda interfaccia sulla porta USB dati (adattatore
 USB-ethernet o chiavetta WiFi): cosi' l'access point resta acceso e hai SSH
 nello stesso momento.
 
+### Note per il Raspberry Pi 4
+
+**HDMI.** Usa **HDMI0**, la porta micro-HDMI piu' vicina all'alimentazione
+USB-C: HDMI1 da sola spesso non da' segnale. Se accendi la TV dopo il Pi
+l'uscita puo' restare spenta; in quel caso metti `hdmi_force_hotplug=1` in
+`/boot/firmware/config.txt`.
+
+**Renderer.** Sul vc4 del Pi 4 il renderer DRM predefinito di `cog` non riesce
+ad allocare il framebuffer (`failed to create framebuffer: Invalid argument`) e
+lo schermo resta nero. `install/kiosk.sh` usa quindi `renderer=gles`; sullo
+Zero 2 W, se dovesse servire, si torna indietro con `COG_RENDERER=modeset`.
+
+**SSH sempre disponibile.** A differenza dello Zero 2 W, il Pi 4 ha la porta
+ethernet: collega il cavo e resti raggiungibile in SSH (con internet) anche con
+l'access point acceso su `wlan0`. Niente `nmcli con down Hotspot`.
+
+**Chromium.** Su Raspberry Pi OS Lite non c'e' nessun server grafico, quindi
+Chromium ha bisogno di un compositore. `install/kiosk.sh` usa `cage`:
+
+    sudo apt install -y chromium cage
+
+poi fai partire il servizio con `USE_CHROMIUM=1`: `systemctl edit
+numeri-gnocco-kiosk` e aggiungi `Environment=USE_CHROMIUM=1` sotto `[Service]`.
+
 ### Comandi utili
 
     systemctl status numeri-gnocco           # stato del server
@@ -135,13 +159,20 @@ uno al banco): tutte le pagine restano allineate in tempo reale.
 - Lo stato sopravvive al riavvio: e' salvato in `state.json`.
 - Se cade la rete, TV e telefono si riconnettono da soli e mostrano un avviso
   rosso finche' sono scollegati.
-- Il suono di cassa e' sintetizzato dalla pagina con le Web Audio API: nessun
-  file audio da caricare.
-- Il browser puo' tenere l'audio bloccato finche' nessuno tocca la pagina: in
-  quel caso la TV mostra in basso a sinistra **"tocca lo schermo o premi un
-  tasto per attivare il suono"**, e al primo tocco suona una volta per conferma.
-  Lo script kiosk passa gia' `--autoplay-policy=no-user-gesture-required` a
-  Chromium; con `cog` di solito l'audio parte da solo.
+- Il suono di cassa e' sintetizzato dalla pagina: nessun file audio da
+  caricare. Viene reso una volta all'apertura in un `OfflineAudioContext`, che
+  le policy autoplay non toccano, e riprodotto con un elemento `<audio>`: cosi'
+  sulla TV non serve nessun gesto dell'utente. Un `AudioContext` dal vivo
+  resterebbe sospeso per sempre, perche' la TV nessuno la tocca.
+- Lo script kiosk passa i flag che sbloccano l'audio degli elementi media
+  (`--media-playback-requires-user-gesture=false` per `cog`,
+  `--autoplay-policy=no-user-gesture-required` per Chromium). Se manca uno dei
+  due, la TV mostra in basso a sinistra **"tocca lo schermo o premi un tasto per
+  attivare il suono"** e al primo tocco suona una volta per conferma.
+- Il suono passa da GStreamer: senza `gstreamer1.0-alsa` e
+  `gstreamer1.0-plugins-good` WebKit non trova un sink audio
+  (`GStreamer element autoaudiosink not found`) e non si sente niente.
+  `setup-pi.sh` li installa.
 - Numeri ammessi: da 1 a 9999. Un numero gia' sul tabellone viene rifiutato con
   un avviso.
 - La TV dispone i numeri da sola: piu' sono, piu' rimpiccioliscono, ma sempre

@@ -71,6 +71,8 @@
 <div id="empty" hidden>Stiamo preparando i vostri ordini</div>
 <div id="audioHint">🔇 tocca lo schermo o premi un tasto per attivare il suono</div>
 <div id="offline">CONNESSIONE PERSA</div>
+<!-- Il suono si sintetizza al volo e finisce qui dentro: vedi renderSound(). -->
+<audio id="ding" preload="auto"></audio>
 
 <script>
 (function () {
@@ -141,23 +143,17 @@
   window.addEventListener('resize', layout);
 
   // ---- suono di cassa, sintetizzato: niente file audio da caricare --------
+  //
+  // Il suono si sintetizza una volta sola in un OfflineAudioContext, che non e'
+  // soggetto alle policy autoplay, e si riproduce con un elemento <audio>. Un
+  // AudioContext dal vivo resterebbe "suspended" finche' non arriva un gesto
+  // dell'utente, e sulla TV non arriva mai nessuno: cog vuole
+  // --media-playback-requires-user-gesture=false (lo passa install/kiosk.sh) e
+  // Chromium --autoplay-policy=no-user-gesture-required. Entrambi valgono per
+  // gli elementi media, non per la Web Audio API.
 
-  var audioCtx = null, noiseBuf = null, master = null;
-
-  function ctx() {
-    if (!audioCtx) {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return null;
-      audioCtx = new AC();
-      // Un compressore in coda: i colpi di campanello sommano molte parziali
-      // e sugli altoparlanti della TV, a volume alto, gracchierebbero.
-      var comp = audioCtx.createDynamicsCompressor();
-      master = audioCtx.createGain();
-      master.gain.value = 0.9;
-      master.connect(comp).connect(audioCtx.destination);
-    }
-    return audioCtx;
-  }
+  var SR = 44100, DUR = 2.0;             // due secondi bastano per le due code
+  var ding = $('ding'), noiseBuf = null;
 
   // Il "clack" del cassetto: rumore breve, non una nota.
   function noise(c) {
@@ -169,7 +165,7 @@
     return noiseBuf;
   }
 
-  function clack(c, t) {
+  function clack(c, dest, t) {
     var src = c.createBufferSource();
     src.buffer = noise(c);
     var bp = c.createBiquadFilter();
@@ -178,7 +174,7 @@
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.5, t + 0.004);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
-    src.connect(bp).connect(g).connect(master);
+    src.connect(bp).connect(g).connect(dest);
     src.start(t); src.stop(t + 0.2);
   }
 
@@ -187,7 +183,7 @@
   var PARTIALS = [[1, 1, 1], [2.01, 0.55, 0.7], [2.99, 0.38, 0.5],
                   [4.21, 0.24, 0.35], [5.43, 0.15, 0.25]];
 
-  function strike(c, t, f0, vol, decay) {
+  function strike(c, dest, t, f0, vol, decay) {
     PARTIALS.forEach(function (p) {
       var osc = c.createOscillator(), g = c.createGain();
       osc.type = 'sine';
@@ -196,48 +192,77 @@
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(peak, t + 0.005);
       g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-      osc.connect(g).connect(master);
+      osc.connect(g).connect(dest);
       osc.start(t); osc.stop(t + len + 0.02);
     });
   }
 
-  function play() {
-    var c = ctx();
-    if (!c) return;
-    var t = c.currentTime + 0.02;
-    clack(c, t);                          // cassetto
-    strike(c, t + 0.005, 1046.5, 0.30, 1.1);   // deng
-    strike(c, t + 0.10,  1568.0, 0.26, 1.4);   // ...deng, una quinta sopra
+  function wav(buf) {
+    var d = buf.getChannelData(0), n = d.length;
+    var out = new DataView(new ArrayBuffer(44 + n * 2)), i;
+    function str(off, s) {
+      for (i = 0; i < s.length; i++) out.setUint8(off + i, s.charCodeAt(i));
+    }
+    str(0, 'RIFF');  out.setUint32(4, 36 + n * 2, true);
+    str(8, 'WAVEfmt ');
+    out.setUint32(16, 16, true);         // dimensione del blocco fmt
+    out.setUint16(20, 1, true);          // PCM
+    out.setUint16(22, 1, true);          // mono
+    out.setUint32(24, buf.sampleRate, true);
+    out.setUint32(28, buf.sampleRate * 2, true);
+    out.setUint16(32, 2, true);          // byte per frame
+    out.setUint16(34, 16, true);         // bit per campione
+    str(36, 'data'); out.setUint32(40, n * 2, true);
+    for (i = 0; i < n; i++) {
+      var s = d[i] < -1 ? -1 : d[i] > 1 ? 1 : d[i];
+      out.setInt16(44 + i * 2, s * 32767, true);
+    }
+    return new Blob([out.buffer], { type: 'audio/wav' });
   }
 
-  // Le policy autoplay tengono il contesto "suspended" finche' non c'e' un
-  // gesto dell'utente: sulla TV non ne arriva mai nessuno. Si prova a
-  // riprendere a ogni suono e a ogni tocco, e intanto si avvisa a schermo.
+  function renderSound() {
+    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!OC || !ding) return;
+    var c = new OC(1, Math.floor(SR * DUR), SR);
+    // Un compressore in coda: i colpi di campanello sommano molte parziali
+    // e sugli altoparlanti della TV, a volume alto, gracchierebbero.
+    var comp = c.createDynamicsCompressor(), master = c.createGain();
+    master.gain.value = 0.9;
+    master.connect(comp).connect(c.destination);
+    clack(c, master, 0);                            // cassetto
+    strike(c, master, 0.005, 1046.5, 0.30, 1.1);    // deng
+    strike(c, master, 0.10,  1568.0, 0.26, 1.4);    // ...deng, una quinta sopra
+    var done = c.startRendering();
+    if (!done || !done.then) return;                // solo API a callback: amen
+    done.then(function (buf) {
+      ding.src = URL.createObjectURL(wav(buf));
+      ding.load();
+    }).catch(function () {});
+  }
+
+  // Se anche l'elemento <audio> viene bloccato (browser senza il flag autoplay),
+  // si avvisa a schermo e si riprova al primo tocco o tasto premuto.
   function kaching() {
+    if (!ding || !ding.src) return;
     try {
-      var c = ctx();
-      if (!c) return;
-      if (c.state === 'running') { play(); return; }
-      c.resume().then(function () { play(); updateHint(); }).catch(function () {});
-    } catch (e) { /* audio non disponibile: amen */ }
+      ding.currentTime = 0;
+      var pr = ding.play();
+      if (pr && pr.catch) {
+        pr.then(function () { hint(false); })
+          .catch(function () { hint(true); });
+      }
+    } catch (e) { hint(true); }
   }
 
-  function updateHint() {
-    var on = audioCtx && audioCtx.state === 'running';
-    $('audioHint').classList.toggle('show', !on);
-  }
+  function hint(show) { $('audioHint').classList.toggle('show', show); }
 
   ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
     window.addEventListener(ev, function () {
-      var c = ctx();
-      if (!c || c.state === 'running') { updateHint(); return; }
-      // Sbloccato adesso: un colpo di prova, cosi' si sente che funziona.
-      c.resume().then(function () { updateHint(); play(); }).catch(function () {});
+      if ($('audioHint').classList.contains('show')) kaching();
     }, { passive: true });
   });
-  ctx();                        // niente suono all'avvio: solo la sonda
-  if (audioCtx) audioCtx.onstatechange = updateHint;
-  updateHint();
+
+  renderSound();
 
   function connect() {
     var es = new EventSource('/events');
