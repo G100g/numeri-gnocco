@@ -36,16 +36,14 @@
   #dot { width: 11px; height: 11px; border-radius: 50%; background: var(--ok); flex: none; }
   #dot.off { background: var(--danger); }
   #bar .counts { margin-left: auto; font-weight: 700; color: var(--text); }
-  #bar .counts .sep { color: var(--muted); font-weight: 400; margin: 0 6px; }
 
-  /* ---- le due liste ---- */
+  /* ---- lista dei numeri esposti ---- */
   #lists { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 80px; }
   .zone { background: var(--panel); border-radius: 14px; padding: 10px; margin-bottom: 8px; }
   .zone h2 {
     margin: 2px 4px 8px; font-size: 12px; font-weight: 700;
     letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
   }
-  #readyZone h2 { color: var(--ok); }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip {
     min-width: 80px; min-height: 66px; padding: 0 14px;
@@ -55,8 +53,7 @@
     display: flex; align-items: center; justify-content: center;
   }
   .chip:active { transform: scale(0.94); filter: brightness(1.35); }
-  #readyChips .chip { background: var(--ok); color: var(--ok-ink); }
-  #readyChips .chip.latest { background: var(--accent); color: var(--accent-ink); }
+  .chip.latest { background: var(--accent); color: var(--accent-ink); }
   .zoneEmpty { color: var(--muted); font-size: 15px; padding: 6px 4px 10px; }
 
   /* ---- inserimento ---- */
@@ -110,19 +107,14 @@
 
 <div id="bar">
   <span id="dot"></span><span id="status">Collegato</span>
-  <span class="counts"><span id="cPending">0</span> in prep.<span class="sep">|</span><span id="cReady">0</span> pronti</span>
+  <span class="counts"><span id="cNumbers">0</span> sul tabellone</span>
 </div>
 
 <div id="lists">
-  <section class="zone" id="pendingZone">
-    <h2>In preparazione — tocca per dire PRONTO</h2>
-    <div class="chips" id="pendingChips"></div>
-    <div class="zoneEmpty" id="pendingEmpty">Nessun ordine in coda.</div>
-  </section>
-  <section class="zone" id="readyZone">
-    <h2>Pronti — tocca quando ritirano</h2>
-    <div class="chips" id="readyChips"></div>
-    <div class="zoneEmpty" id="readyEmpty">Nessun ordine pronto.</div>
+  <section class="zone" id="numbersZone">
+    <h2>Sul tabellone — tocca per togliere</h2>
+    <div class="chips" id="numberChips"></div>
+    <div class="zoneEmpty" id="numbersEmpty">Nessun numero esposto.</div>
   </section>
 </div>
 
@@ -144,7 +136,7 @@
   <button class="key" id="back">⌫</button>
   <button class="key" data-d="0">0</button>
   <button class="key" id="clearEntry">C</button>
-  <button class="key add wide" id="add" disabled>AGGIUNGI IN CODA</button>
+  <button class="key add wide" id="add" disabled>AGGIUNGI</button>
   <button class="key" id="clearAll">Svuota</button>
 </div>
 
@@ -160,7 +152,7 @@
 (function () {
   var MAX_DIGITS = 4;
   var entry = '';
-  var state = { pending: [], ready: [], last_ready: null, version: -1 };
+  var state = { numbers: [], highlight: null, version: -1 };
 
   var $ = function (id) { return document.getElementById(id); };
   var entryValue = $('entryValue'), addBtn = $('add'), toast = $('toast'), modal = $('modal');
@@ -219,30 +211,26 @@
     if (!n) return;
     entry = ''; renderEntry(); buzz(35);
     post('/api/add', { number: n }).then(function (res) {
-      if (res.ok) say('In coda: ' + n);
+      if (res.ok) say('Aggiunto: ' + n, 'var(--ok)');
       else if (res.error === 'gia_presente') say('Il ' + n + " c'è già", 'var(--danger)');
     });
   });
 
-  // ---- liste -------------------------------------------------------------
+  // ---- lista -------------------------------------------------------------
 
-  function fillChips(container, emptyEl, numbers, onTap, highlight) {
+  function renderLists() {
+    var numbers = state.numbers || [];
+    $('cNumbers').textContent = numbers.length;
+    var container = $('numberChips');
     container.innerHTML = '';
     numbers.slice().sort(function (a, b) { return a - b; }).forEach(function (n) {
       var b = document.createElement('button');
-      b.className = 'chip' + (n === highlight ? ' latest' : '');
+      b.className = 'chip' + (n === state.highlight ? ' latest' : '');
       b.textContent = n;
-      b.addEventListener('click', function () { onTap(n); });
+      b.addEventListener('click', function () { menuNumero(n); });
       container.appendChild(b);
     });
-    emptyEl.hidden = numbers.length > 0;
-  }
-
-  function renderLists() {
-    $('cPending').textContent = state.pending.length;
-    $('cReady').textContent = state.ready.length;
-    fillChips($('pendingChips'), $('pendingEmpty'), state.pending, menuPending, null);
-    fillChips($('readyChips'), $('readyEmpty'), state.ready, menuReady, state.last_ready);
+    $('numbersEmpty').hidden = numbers.length > 0;
   }
 
   // ---- menu contestuale --------------------------------------------------
@@ -270,55 +258,25 @@
   // Chiude toccando fuori dalla scheda: evita di restare bloccati.
   modal.addEventListener('click', function (ev) { if (ev.target === modal) closeMenu(); });
 
-  function menuPending(n) {
-    openMenu(n, 'Ordine in preparazione', [
-      { testo: '✓  È PRONTO', stile: 'primary', azione: function () {
-          post('/api/ready', { number: n, ready: true }).then(function (res) {
-            if (res.ok) say('Pronto: ' + n, 'var(--ok)');
-          });
-        } },
-      { testo: 'Cancella ordine', stile: 'danger', azione: function () {
-          confermaCancella(n);
-        } },
-      { testo: 'Chiudi', stile: 'close' }
-    ]);
-  }
-
-  function menuReady(n) {
-    openMenu(n, 'Ordine pronto', [
-      { testo: '✓  RITIRATO', stile: 'primary', azione: function () {
+  // Il tap sul numero apre solo il menu: togliere dal tabellone chiede
+  // sempre una seconda conferma.
+  function menuNumero(n) {
+    openMenu(n, 'Numero sul tabellone', [
+      { testo: '✓  TOGLI DAL TABELLONE', stile: 'primary', azione: function () {
           post('/api/remove', { number: n }).then(function (res) {
-            if (res.ok) say('Ritirato ' + n, 'var(--ok)');
-          });
-        } },
-      { testo: 'Torna in preparazione', stile: 'neutral', azione: function () {
-          post('/api/ready', { number: n, ready: false }).then(function (res) {
-            if (res.ok) say(n + ' rimesso in coda');
+            if (res.ok) say('Tolto ' + n, 'var(--ok)');
           });
         } },
       { testo: 'Chiudi', stile: 'close' }
-    ]);
-  }
-
-  // Cancellare un ordine non ritirato e' l'unica azione distruttiva:
-  // chiede una conferma in piu'.
-  function confermaCancella(n) {
-    openMenu(n, 'Cancellare del tutto?', [
-      { testo: 'SÌ, CANCELLA', stile: 'danger', azione: function () {
-          post('/api/remove', { number: n }).then(function (res) {
-            if (res.ok) say('Cancellato ' + n, 'var(--danger)');
-          });
-        } },
-      { testo: 'No, lascia stare', stile: 'neutral' }
     ]);
   }
 
   $('clearAll').addEventListener('click', function () {
-    var tot = state.pending.length + state.ready.length;
+    var tot = (state.numbers || []).length;
     if (!tot) return;
-    openMenu(tot, 'Cancellare TUTTI gli ordini?', [
+    openMenu(tot, 'Togliere TUTTI i numeri?', [
       { testo: 'SÌ, SVUOTA TUTTO', stile: 'danger', azione: function () {
-          post('/api/clear').then(function () { say('Lista svuotata', 'var(--ok)'); });
+          post('/api/clear').then(function () { say('Tabellone svuotato', 'var(--ok)'); });
         } },
       { testo: 'No, lascia stare', stile: 'neutral' }
     ]);

@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Display numeri ordini - server.
 
-Ogni ordine ha due stati: "in preparazione" (inserito alla cassa) e "pronto"
-(da ritirare al banco). Il passaggio a pronto e' cio' che squilla e lampeggia
-sulla TV.
+Un ordine ha un solo stato: e' esposto sulla TV finche' qualcuno non lo toglie.
 
 Espone:
   GET  /tv          pagina a schermo intero per la TV
   GET  /pad         pagina di controllo per lo smartphone
   GET  /events      stream SSE con lo stato corrente
-  POST /api/add     {"number": 42}                 -> in preparazione
-  POST /api/ready   {"number": 42, "ready": true}  -> pronto / torna indietro
-  POST /api/remove  {"number": 42}                 -> ritirato, via dal display
+  POST /api/add     {"number": 42}   -> compare sulla TV, in giallo
+  POST /api/remove  {"number": 42}   -> ritirato, via dal display
   POST /api/clear   {}
   GET  <altro>      redirect a /pad (captive portal)
 
@@ -34,16 +31,13 @@ HEARTBEAT_SECONDS = 15
 
 
 class State:
-    """Ordini in corso, persistiti su disco.
-
-    `orders` conserva l'ordine di inserimento: [{"n": 42, "ready": False}, ...]
-    """
+    """Numeri esposti, persistiti su disco, in ordine di inserimento."""
 
     def __init__(self, path):
         self.path = path
         self.lock = threading.Lock()
-        self.orders = []
-        self.last_ready = None      # ultimo numero passato a "pronto"
+        self.numbers = []
+        self.adds = 0               # quanti inserimenti: fa suonare la TV
         self.version = 0
         self.subscribers = []
         self._load()
@@ -54,20 +48,25 @@ class State:
         try:
             with open(self.path) as fh:
                 data = json.load(fh)
-            orders = []
-            for item in data.get("orders", []):
-                orders.append({"n": int(item["n"]), "ready": bool(item.get("ready"))})
-            self.orders = orders
-            self.last_ready = data.get("last_ready")
+            raw = data.get("numbers")
+            if raw is None:
+                # File scritto dalla versione con "in preparazione"/"pronto":
+                # i due stati collassano in una lista sola.
+                raw = [item["n"] for item in data.get("orders", [])]
+            numbers = []
+            for item in raw:
+                n = int(item)
+                if n not in numbers:
+                    numbers.append(n)
+            self.numbers = numbers
         except (OSError, ValueError, TypeError, KeyError):
-            self.orders = []
-            self.last_ready = None
+            self.numbers = []
 
     def _save(self):
         tmp = self.path + ".tmp"
         try:
             with open(tmp, "w") as fh:
-                json.dump({"orders": self.orders, "last_ready": self.last_ready}, fh)
+                json.dump({"numbers": self.numbers}, fh)
             os.replace(tmp, self.path)
         except OSError:
             pass  # un disco pieno non deve fermare il servizio
@@ -75,55 +74,35 @@ class State:
     # ------------------------------------------------------------------ stato
 
     def snapshot(self):
+        # `numbers` e' in ordine di inserimento: l'ultimo e' quello da
+        # evidenziare, e togliendolo il giallo torna da solo al precedente.
         return {
-            "pending": [o["n"] for o in self.orders if not o["ready"]],
-            "ready": [o["n"] for o in self.orders if o["ready"]],
-            "last_ready": self.last_ready,
+            "numbers": list(self.numbers),
+            "highlight": self.numbers[-1] if self.numbers else None,
+            "adds": self.adds,
             "version": self.version,
         }
 
-    def _find(self, number):
-        for o in self.orders:
-            if o["n"] == number:
-                return o
-        return None
-
     def add(self, number):
         with self.lock:
-            if self._find(number) is not None:
+            if number in self.numbers:
                 return False, "gia_presente"
-            self.orders.append({"n": number, "ready": False})
-            self._commit()
-        return True, None
-
-    def set_ready(self, number, ready):
-        with self.lock:
-            order = self._find(number)
-            if order is None:
-                return False, "non_trovato"
-            order["ready"] = ready
-            if ready:
-                self.last_ready = number
-            elif self.last_ready == number:
-                self.last_ready = None
+            self.numbers.append(number)
+            self.adds += 1
             self._commit()
         return True, None
 
     def remove(self, number):
         with self.lock:
-            order = self._find(number)
-            if order is None:
+            if number not in self.numbers:
                 return False, "non_trovato"
-            self.orders.remove(order)
-            if self.last_ready == number:
-                self.last_ready = None
+            self.numbers.remove(number)
             self._commit()
         return True, None
 
     def clear(self):
         with self.lock:
-            self.orders = []
-            self.last_ready = None
+            self.numbers = []
             self._commit()
         return True, None
 
@@ -251,7 +230,7 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(True, None)
             return
 
-        if path not in ("/api/add", "/api/ready", "/api/remove"):
+        if path not in ("/api/add", "/api/remove"):
             self._send_json({"error": "not_found"}, 404)
             return
 
@@ -262,8 +241,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/add":
             ok, err = STATE.add(number)
-        elif path == "/api/ready":
-            ok, err = STATE.set_ready(number, bool(data.get("ready", True)))
         else:
             ok, err = STATE.remove(number)
         self._reply(ok, err)

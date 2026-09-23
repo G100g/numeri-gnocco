@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installazione completa su Raspberry Pi Zero 2 W (Raspberry Pi OS Lite, Bookworm).
+# Installazione completa su Raspberry Pi Zero 2 W (Raspberry Pi OS Lite, Trixie o Bookworm).
 # Rieseguibile senza danni: si puo' rilanciare per cambiare la password.
 set -euo pipefail
 
