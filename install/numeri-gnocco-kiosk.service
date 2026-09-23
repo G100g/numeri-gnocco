@@ -2,6 +2,10 @@
 Description=Numeri Gnocco - browser sulla TV
 After=numeri-gnocco.service
 Wants=numeri-gnocco.service
+# Il prompt di login su tty1 tiene la console e impedisce al browser di
+# prendersi lo schermo: i due servizi non possono convivere.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
 
 [Service]
 Type=simple
