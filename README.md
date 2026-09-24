@@ -125,8 +125,9 @@ quindi il kiosk non si prova da SSH). Ci pensa il setup:
 
     sudo USE_CHROMIUM=1 WIFI_PASS='latuapassword' ./install/setup-pi.sh
 
-Installa `chromium`, `cage` e `seatd`, mette l'utente nel gruppo `_seatd` e
-aggiunge `Environment=USE_CHROMIUM=1` al servizio del kiosk.
+Installa `chromium`, `cage` e `seatd`, fa partire `seatd` con `-g video` (il suo
+socket e' riservato a root, e il gruppo dedicato non esiste su Debian) e aggiunge
+`Environment=USE_CHROMIUM=1` al servizio del kiosk.
 
 ### Comandi utili
 

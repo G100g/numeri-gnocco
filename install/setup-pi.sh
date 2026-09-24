@@ -47,8 +47,21 @@ if [ "${USE_CHROMIUM:-0}" = "1" ]; then
   # input senza una sessione logind (il servizio gira su tty1, non da SSH).
   echo "==> Chromium + cage"
   apt-get install -y chromium cage seatd
-  systemctl enable --now seatd
-  usermod -aG _seatd "$APP_USER"
+
+  # Il socket di seatd e' riservato a root. Invece di cercare un gruppo che
+  # cambia nome da una distribuzione all'altra ("_seatd", "seat", su Debian
+  # nessuno), si dice a seatd di aprirlo al gruppo "video": il servizio del
+  # kiosk ce l'ha gia' fra i SupplementaryGroups.
+  mkdir -p /etc/systemd/system/seatd.service.d
+  cat > /etc/systemd/system/seatd.service.d/gnocco.conf <<SEAT
+[Service]
+ExecStart=
+ExecStart=$(command -v seatd) -g video
+SEAT
+  systemctl daemon-reload
+  systemctl enable seatd
+  systemctl restart seatd
+
   sed -i '/^\[Service\]/a Environment=USE_CHROMIUM=1' \
     /etc/systemd/system/numeri-gnocco-kiosk.service
 fi
