@@ -49,6 +49,15 @@ CHROMIUM_OPTS=(
   --disable-session-crashed-bubble
   --check-for-update-interval=31536000
   --autoplay-policy=no-user-gesture-required
+  # Niente proposta di tradurre la pagina, niente schermate di benvenuto:
+  # sulla TV nessuno puo' chiuderle.
+  --lang=it-IT
+  --disable-features=Translate,TranslateUI
+  --disable-translate-new-ux
+  --no-first-run --no-default-browser-check
+  --disable-search-engine-choice-screen
+  --disable-component-update
+  --password-store=basic
 )
 
 # Chromium ricorda il crash del riavvio precedente e mostra una barra gialla.
