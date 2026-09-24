@@ -113,13 +113,20 @@ Zero 2 W, se dovesse servire, si torna indietro con `COG_RENDERER=modeset`.
 ethernet: collega il cavo e resti raggiungibile in SSH (con internet) anche con
 l'access point acceso su `wlan0`. Niente `nmcli con down Hotspot`.
 
-**Chromium.** Su Raspberry Pi OS Lite non c'e' nessun server grafico, quindi
-Chromium ha bisogno di un compositore. `install/kiosk.sh` usa `cage`:
+**Chromium.** `cog` non fa partire l'audio da solo: il flag
+`--media-playback-requires-user-gesture=false` copre gli elementi media, ma
+WebKit decide l'autoplay dell'audio a un livello che `cog` non espone, quindi
+sulla TV resta l'avviso "tocca lo schermo" finche' non premi un tasto. Su
+Chromium `--autoplay-policy=no-user-gesture-required` funziona, ed e' il motivo
+per cui sul Pi 4 conviene Chromium. Su Raspberry Pi OS Lite non c'e' un server
+grafico, quindi serve un compositore: `install/kiosk.sh` usa `cage`, e `cage` ha
+bisogno di `seatd` per accedere a schermo e input (il servizio gira su tty1,
+quindi il kiosk non si prova da SSH). Ci pensa il setup:
 
-    sudo apt install -y chromium cage
+    sudo USE_CHROMIUM=1 WIFI_PASS='latuapassword' ./install/setup-pi.sh
 
-poi fai partire il servizio con `USE_CHROMIUM=1`: `systemctl edit
-numeri-gnocco-kiosk` e aggiungi `Environment=USE_CHROMIUM=1` sotto `[Service]`.
+Installa `chromium`, `cage` e `seatd`, mette l'utente nel gruppo `_seatd` e
+aggiunge `Environment=USE_CHROMIUM=1` al servizio del kiosk.
 
 ### Comandi utili
 

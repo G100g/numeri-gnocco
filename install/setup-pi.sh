@@ -40,8 +40,18 @@ echo "==> Servizio browser"
 sed -e "s|/home/pi/numeri-gnocco|$APP_DIR|g" \
     -e "s|^User=pi|User=$APP_USER|" \
     -e "s|HOME=/home/pi|HOME=/home/$APP_USER|" \
-    -e "s|XDG_RUNTIME_DIR=/run/user/1000|XDG_RUNTIME_DIR=/run/user/$(id -u "$APP_USER")|" \
     "$APP_DIR/install/numeri-gnocco-kiosk.service" > /etc/systemd/system/numeri-gnocco-kiosk.service
+
+if [ "${USE_CHROMIUM:-0}" = "1" ]; then
+  # cage e' un compositore Wayland minimo; seatd gli da' accesso a schermo e
+  # input senza una sessione logind (il servizio gira su tty1, non da SSH).
+  echo "==> Chromium + cage"
+  apt-get install -y chromium cage seatd
+  systemctl enable --now seatd
+  usermod -aG _seatd "$APP_USER"
+  sed -i '/^\[Service\]/a Environment=USE_CHROMIUM=1' \
+    /etc/systemd/system/numeri-gnocco-kiosk.service
+fi
 
 echo "==> Access point $SSID"
 nmcli connection delete Hotspot >/dev/null 2>&1 || true

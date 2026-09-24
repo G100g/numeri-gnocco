@@ -11,13 +11,19 @@ After=getty@tty1.service
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/numeri-gnocco
-Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=HOME=/home/pi
+# Wayland (cage) e WPE ci mettono i loro socket. Un servizio di sistema non ha
+# una sessione logind, quindi /run/user/<uid> potrebbe non esistere: questa la
+# crea systemd all'avvio e la cancella allo stop.
+Environment=XDG_RUNTIME_DIR=/run/numeri-gnocco
+RuntimeDirectory=numeri-gnocco
+RuntimeDirectoryMode=0700
 ExecStart=/home/pi/numeri-gnocco/install/kiosk.sh
 Restart=always
 RestartSec=5
-# Serve per disegnare sullo schermo senza X server.
-SupplementaryGroups=video render input tty
+# video/render/input/tty: disegnare sullo schermo senza X server.
+# audio: l'uscita HDMI, altrimenti il campanello non si sente.
+SupplementaryGroups=video render input tty audio
 StandardInput=tty
 TTYPath=/dev/tty1
 TTYReset=yes

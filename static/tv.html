@@ -157,19 +157,25 @@
   function kaching() {
     if (!ding) return;
     try {
+      if (!ding.paused) ding.pause();     // due numeri di fila: si riparte da zero
       ding.currentTime = 0;
       var pr = ding.play();
-      if (pr && pr.catch) {
-        pr.then(function () { hint(false); })
-          .catch(function () { hint(true); });
-      }
-    } catch (e) { hint(true); }
+      // WebKit rifiuta questa promise con AbortError proprio perche' il
+      // currentTime qui sopra "interrompe" la riproduzione precedente: il suono
+      // si sente comunque, quindi la promise non dice niente di utile.
+      if (pr && pr.catch) pr.catch(function () {});
+    } catch (e) { /* si vede dal controllo qui sotto se e' andata male */ }
+    // L'unica verifica che vale: mezzo secondo dopo, il suono e' andato avanti?
+    setTimeout(function () { hint(!(ding.currentTime > 0)); }, 500);
   }
 
   function hint(show) { $('audioHint').classList.toggle('show', show); }
 
-  // Se il browser blocca comunque la riproduzione si avvisa a schermo, e al
-  // primo tocco o tasto premuto si riprova (allora il gesto c'e').
+  // Se parte davvero, l'avviso sparisce subito senza aspettare il controllo.
+  if (ding) ding.addEventListener('playing', function () { hint(false); });
+
+  // Se il browser blocca la riproduzione si avvisa a schermo, e al primo tocco
+  // o tasto premuto si riprova (allora il gesto c'e').
   ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
     window.addEventListener(ev, function () {
       if ($('audioHint').classList.contains('show')) kaching();
