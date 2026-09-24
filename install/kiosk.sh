@@ -6,9 +6,7 @@ URL="${URL:-http://localhost/tv}"
 # Renderer DRM di cog: "gles" o "modeset". Sul Pi 4 (vc4) "modeset" non riesce
 # ad allocare il framebuffer ("failed to create framebuffer"), quindi gles.
 COG_RENDERER="${COG_RENDERER:-gles}"
-# Senza questo l'audio degli elementi <audio> resta bloccato: sulla TV non
-# arriva mai un gesto dell'utente.
-COG_OPTS=(--media-playback-requires-user-gesture=false)
+COG_OPTS=()
 
 # Il browser deve partire solo quando il server risponde, altrimenti mostra
 # una pagina di errore e resta li'.
@@ -48,7 +46,6 @@ CHROMIUM_OPTS=(
   --kiosk --noerrdialogs --disable-infobars
   --disable-session-crashed-bubble
   --check-for-update-interval=31536000
-  --autoplay-policy=no-user-gesture-required
   # Niente proposta di tradurre la pagina, niente schermate di benvenuto:
   # sulla TV nessuno puo' chiuderle.
   --lang=it-IT

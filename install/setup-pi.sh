@@ -27,9 +27,7 @@ echo "==> Applicazione in: $APP_DIR (utente: $APP_USER)"
 
 echo "==> Installazione browser leggero"
 apt-get update -qq
-# gstreamer1.0-alsa + plugins-good: senza questi WebKit non trova un sink audio
-# ("GStreamer element autoaudiosink not found") e il campanello non suona.
-apt-get install -y cog curl libgles2 libegl1 gstreamer1.0-alsa gstreamer1.0-plugins-good
+apt-get install -y cog curl libgles2 libegl1
 
 echo "==> Servizio applicazione"
 sed -e "s|/home/pi/numeri-gnocco|$APP_DIR|g" \

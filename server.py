@@ -208,8 +208,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file("pad.html", "text/html; charset=utf-8")
         elif path in ("/tv", "/tv.html"):
             self._send_file("tv.html", "text/html; charset=utf-8")
-        elif path == "/ding.wav":
-            self._send_file("ding.wav", "audio/wav")
         elif path == "/events":
             self._stream_events()
         elif path == "/api/state":

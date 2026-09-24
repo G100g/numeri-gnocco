@@ -21,9 +21,8 @@ RuntimeDirectoryMode=0700
 ExecStart=/home/pi/numeri-gnocco/install/kiosk.sh
 Restart=always
 RestartSec=5
-# video/render/input/tty: disegnare sullo schermo senza X server.
-# audio: l'uscita HDMI, altrimenti il campanello non si sente.
-SupplementaryGroups=video render input tty audio
+# Serve per disegnare sullo schermo senza X server.
+SupplementaryGroups=video render input tty
 StandardInput=tty
 TTYPath=/dev/tty1
 TTYReset=yes

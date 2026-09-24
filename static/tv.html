@@ -54,13 +54,6 @@
     color: var(--muted); font-size: 7vh; font-weight: 600; line-height: 1.2;
   }
 
-  #audioHint {
-    position: fixed; bottom: 1.6vh; left: 2vh;
-    background: #2a3340; color: var(--muted); font-size: 1.9vh; font-weight: 600;
-    padding: 0.8vh 1.6vh; border-radius: 1vh; display: none;
-  }
-  #audioHint.show { display: block; }
-
   #offline {
     position: fixed; bottom: 1.6vh; right: 2vh;
     background: #b3261e; color: #fff; font-size: 2.2vh; font-weight: 700;
@@ -72,10 +65,7 @@
 <body>
 <div id="grid"></div>
 <div id="empty" hidden>Stiamo preparando i vostri ordini</div>
-<div id="audioHint">🔇 tocca lo schermo o premi un tasto per attivare il suono</div>
 <div id="offline">CONNESSIONE PERSA</div>
-<!-- Il campanello: file generato da tools/make-ding.py. -->
-<audio id="ding" src="/ding.wav" preload="auto"></audio>
 
 <script>
 (function () {
@@ -135,55 +125,14 @@
     // giallo passa da solo a quello prima.
     highlight = (state.highlight === undefined) ? null : state.highlight;
 
-    // Squilla e lampeggia solo a un inserimento nuovo, non quando il giallo
-    // si sposta perche' qualcuno ha tolto un numero.
+    // Lampeggia solo a un inserimento nuovo, non quando il giallo si sposta
+    // perche' qualcuno ha tolto un numero.
     var isNew = lastAdds !== null && state.adds > lastAdds;
     lastAdds = state.adds;
     draw(isNew);
-    if (isNew) kaching();
   }
 
   window.addEventListener('resize', layout);
-
-  // ---- suono di cassa ------------------------------------------------------
-  //
-  // Un file WAV, non la Web Audio API: un AudioContext dal vivo resta
-  // "suspended" finche' non arriva un gesto dell'utente, e sulla TV non arriva
-  // mai nessuno. Il file lo genera tools/make-ding.py, che contiene la sintesi.
-  // Perche' parta da solo il browser va avviato con l'autoplay sbloccato:
-  // --media-playback-requires-user-gesture=false per cog,
-  // --autoplay-policy=no-user-gesture-required per Chromium. Ci pensa
-  // install/kiosk.sh.
-
-  var ding = $('ding');
-
-  function kaching() {
-    if (!ding) return;
-    try {
-      if (!ding.paused) ding.pause();     // due numeri di fila: si riparte da zero
-      ding.currentTime = 0;
-      var pr = ding.play();
-      // WebKit rifiuta questa promise con AbortError proprio perche' il
-      // currentTime qui sopra "interrompe" la riproduzione precedente: il suono
-      // si sente comunque, quindi la promise non dice niente di utile.
-      if (pr && pr.catch) pr.catch(function () {});
-    } catch (e) { /* si vede dal controllo qui sotto se e' andata male */ }
-    // L'unica verifica che vale: mezzo secondo dopo, il suono e' andato avanti?
-    setTimeout(function () { hint(!(ding.currentTime > 0)); }, 500);
-  }
-
-  function hint(show) { $('audioHint').classList.toggle('show', show); }
-
-  // Se parte davvero, l'avviso sparisce subito senza aspettare il controllo.
-  if (ding) ding.addEventListener('playing', function () { hint(false); });
-
-  // Se il browser blocca la riproduzione si avvisa a schermo, e al primo tocco
-  // o tasto premuto si riprova (allora il gesto c'e').
-  ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
-    window.addEventListener(ev, function () {
-      if ($('audioHint').classList.contains('show')) kaching();
-    }, { passive: true });
-  });
 
   function connect() {
     var es = new EventSource('/events');

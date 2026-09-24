@@ -22,10 +22,8 @@ apre una pagina e funziona, anche in piu' persone contemporaneamente.
     server.py              server HTTP + stream SSE (solo standard library)
     static/tv.html         pagina per la TV
     static/pad.html        pagina per lo smartphone
-    static/ding.wav        campanello di cassa, generato da tools/make-ding.py
     state.json             numeri esposti (creato al primo avvio)
     cad/                   supporto stampabile in 3D per il tablet
-    tools/make-ding.py     risintetizza static/ding.wav
     install/setup-pi.sh    installazione automatica sul Raspberry Pi
     install/               unit systemd, script kiosk, configurazione access point
 
@@ -113,13 +111,9 @@ Zero 2 W, se dovesse servire, si torna indietro con `COG_RENDERER=modeset`.
 ethernet: collega il cavo e resti raggiungibile in SSH (con internet) anche con
 l'access point acceso su `wlan0`. Niente `nmcli con down Hotspot`.
 
-**Chromium.** `cog` non fa partire l'audio da solo: il flag
-`--media-playback-requires-user-gesture=false` copre gli elementi media, ma
-WebKit decide l'autoplay dell'audio a un livello che `cog` non espone, quindi
-sulla TV resta l'avviso "tocca lo schermo" finche' non premi un tasto. Su
-Chromium `--autoplay-policy=no-user-gesture-required` funziona, ed e' il motivo
-per cui sul Pi 4 conviene Chromium. Su Raspberry Pi OS Lite non c'e' un server
-grafico, quindi serve un compositore: `install/kiosk.sh` usa `cage`, e `cage` ha
+**Chromium.** Su un Pi 4 e' la scelta comoda: il renderer di `cog` va
+convinto (vedi sopra) e la RAM non e' un problema. Su Raspberry Pi OS Lite non
+c'e' un server grafico, quindi serve un compositore: `install/kiosk.sh` usa `cage`, e `cage` ha
 bisogno di `seatd` per accedere a schermo e input (il servizio gira su tty1,
 quindi il kiosk non si prova da SSH). Ci pensa il setup:
 
@@ -147,14 +141,14 @@ script `setup-pi.sh` e' leggibile come traccia dei comandi.
 Un numero c'e' o non c'e': niente stati intermedi.
 
 **1. Quando l'ordine e' pronto** — digita il numero e premi **AGGIUNGI**.
-Compare subito sulla TV, con lampeggio e segnale acustico.
+Compare subito sulla TV, con un lampeggio.
 
 **2. Quando il cliente ritira** — tocca il numero nella lista e scegli
 **TOGLI DAL TABELLONE**. Sparisce dal display.
 
 In giallo c'e' sempre l'ultimo numero inserito fra quelli ancora esposti: se lo
-togli, il giallo passa da solo a quello inserito prima. Il suono invece si sente
-solo ai nuovi inserimenti.
+togli, il giallo passa da solo a quello inserito prima. Il lampeggio invece si
+vede solo ai nuovi inserimenti.
 
 Toccando un numero non succede mai niente senza una seconda conferma: il tap
 apre solo un menu.
@@ -169,21 +163,6 @@ uno al banco): tutte le pagine restano allineate in tempo reale.
 - Lo stato sopravvive al riavvio: e' salvato in `state.json`.
 - Se cade la rete, TV e telefono si riconnettono da soli e mostrano un avviso
   rosso finche' sono scollegati.
-- Il suono di cassa e' un file, `static/ding.wav`, riprodotto con un elemento
-  `<audio>`. La sintesi (colpo di cassetto piu' due "deng" con parziali
-  inarmoniche) sta in `tools/make-ding.py`: per cambiare il suono si modificano
-  i parametri la' e si rilancia lo script. Prima era sintetizzato nella pagina
-  con le Web Audio API, ma un `AudioContext` dal vivo resta sospeso finche' non
-  arriva un gesto dell'utente, e la TV nessuno la tocca.
-- Lo script kiosk passa i flag che sbloccano l'audio degli elementi media
-  (`--media-playback-requires-user-gesture=false` per `cog`,
-  `--autoplay-policy=no-user-gesture-required` per Chromium). Se manca uno dei
-  due, la TV mostra in basso a sinistra **"tocca lo schermo o premi un tasto per
-  attivare il suono"** e al primo tocco suona una volta per conferma.
-- Il suono passa da GStreamer: senza `gstreamer1.0-alsa` e
-  `gstreamer1.0-plugins-good` WebKit non trova un sink audio
-  (`GStreamer element autoaudiosink not found`) e non si sente niente.
-  `setup-pi.sh` li installa.
 - Numeri ammessi: da 1 a 9999. Un numero gia' sul tabellone viene rifiutato con
   un avviso.
 - La TV dispone i numeri da sola: piu' sono, piu' rimpiccioliscono, ma sempre
