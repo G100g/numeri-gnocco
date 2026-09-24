@@ -71,8 +71,8 @@
 <div id="empty" hidden>Stiamo preparando i vostri ordini</div>
 <div id="audioHint">🔇 tocca lo schermo o premi un tasto per attivare il suono</div>
 <div id="offline">CONNESSIONE PERSA</div>
-<!-- Il suono si sintetizza al volo e finisce qui dentro: vedi renderSound(). -->
-<audio id="ding" preload="auto"></audio>
+<!-- Il campanello: file generato da tools/make-ding.py. -->
+<audio id="ding" src="/ding.wav" preload="auto"></audio>
 
 <script>
 (function () {
@@ -142,108 +142,20 @@
 
   window.addEventListener('resize', layout);
 
-  // ---- suono di cassa, sintetizzato: niente file audio da caricare --------
+  // ---- suono di cassa ------------------------------------------------------
   //
-  // Il suono si sintetizza una volta sola in un OfflineAudioContext, che non e'
-  // soggetto alle policy autoplay, e si riproduce con un elemento <audio>. Un
-  // AudioContext dal vivo resterebbe "suspended" finche' non arriva un gesto
-  // dell'utente, e sulla TV non arriva mai nessuno: cog vuole
-  // --media-playback-requires-user-gesture=false (lo passa install/kiosk.sh) e
-  // Chromium --autoplay-policy=no-user-gesture-required. Entrambi valgono per
-  // gli elementi media, non per la Web Audio API.
+  // Un file WAV, non la Web Audio API: un AudioContext dal vivo resta
+  // "suspended" finche' non arriva un gesto dell'utente, e sulla TV non arriva
+  // mai nessuno. Il file lo genera tools/make-ding.py, che contiene la sintesi.
+  // Perche' parta da solo il browser va avviato con l'autoplay sbloccato:
+  // --media-playback-requires-user-gesture=false per cog,
+  // --autoplay-policy=no-user-gesture-required per Chromium. Ci pensa
+  // install/kiosk.sh.
 
-  var SR = 44100, DUR = 2.0;             // due secondi bastano per le due code
-  var ding = $('ding'), noiseBuf = null;
+  var ding = $('ding');
 
-  // Il "clack" del cassetto: rumore breve, non una nota.
-  function noise(c) {
-    if (!noiseBuf) {
-      noiseBuf = c.createBuffer(1, Math.floor(c.sampleRate * 0.2), c.sampleRate);
-      var d = noiseBuf.getChannelData(0);
-      for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    }
-    return noiseBuf;
-  }
-
-  function clack(c, dest, t) {
-    var src = c.createBufferSource();
-    src.buffer = noise(c);
-    var bp = c.createBiquadFilter();
-    bp.type = 'bandpass'; bp.frequency.value = 2600; bp.Q.value = 0.9;
-    var g = c.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.5, t + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
-    src.connect(bp).connect(g).connect(dest);
-    src.start(t); src.stop(t + 0.2);
-  }
-
-  // Un colpo di campanello: parziali inarmoniche, quelle acute si spengono
-  // prima. E' questo che distingue un "deng" metallico da un bip.
-  var PARTIALS = [[1, 1, 1], [2.01, 0.55, 0.7], [2.99, 0.38, 0.5],
-                  [4.21, 0.24, 0.35], [5.43, 0.15, 0.25]];
-
-  function strike(c, dest, t, f0, vol, decay) {
-    PARTIALS.forEach(function (p) {
-      var osc = c.createOscillator(), g = c.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(f0 * p[0], t);
-      var peak = vol * p[1], len = decay * p[2];
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(peak, t + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-      osc.connect(g).connect(dest);
-      osc.start(t); osc.stop(t + len + 0.02);
-    });
-  }
-
-  function wav(buf) {
-    var d = buf.getChannelData(0), n = d.length;
-    var out = new DataView(new ArrayBuffer(44 + n * 2)), i;
-    function str(off, s) {
-      for (i = 0; i < s.length; i++) out.setUint8(off + i, s.charCodeAt(i));
-    }
-    str(0, 'RIFF');  out.setUint32(4, 36 + n * 2, true);
-    str(8, 'WAVEfmt ');
-    out.setUint32(16, 16, true);         // dimensione del blocco fmt
-    out.setUint16(20, 1, true);          // PCM
-    out.setUint16(22, 1, true);          // mono
-    out.setUint32(24, buf.sampleRate, true);
-    out.setUint32(28, buf.sampleRate * 2, true);
-    out.setUint16(32, 2, true);          // byte per frame
-    out.setUint16(34, 16, true);         // bit per campione
-    str(36, 'data'); out.setUint32(40, n * 2, true);
-    for (i = 0; i < n; i++) {
-      var s = d[i] < -1 ? -1 : d[i] > 1 ? 1 : d[i];
-      out.setInt16(44 + i * 2, s * 32767, true);
-    }
-    return new Blob([out.buffer], { type: 'audio/wav' });
-  }
-
-  function renderSound() {
-    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    if (!OC || !ding) return;
-    var c = new OC(1, Math.floor(SR * DUR), SR);
-    // Un compressore in coda: i colpi di campanello sommano molte parziali
-    // e sugli altoparlanti della TV, a volume alto, gracchierebbero.
-    var comp = c.createDynamicsCompressor(), master = c.createGain();
-    master.gain.value = 0.9;
-    master.connect(comp).connect(c.destination);
-    clack(c, master, 0);                            // cassetto
-    strike(c, master, 0.005, 1046.5, 0.30, 1.1);    // deng
-    strike(c, master, 0.10,  1568.0, 0.26, 1.4);    // ...deng, una quinta sopra
-    var done = c.startRendering();
-    if (!done || !done.then) return;                // solo API a callback: amen
-    done.then(function (buf) {
-      ding.src = URL.createObjectURL(wav(buf));
-      ding.load();
-    }).catch(function () {});
-  }
-
-  // Se anche l'elemento <audio> viene bloccato (browser senza il flag autoplay),
-  // si avvisa a schermo e si riprova al primo tocco o tasto premuto.
   function kaching() {
-    if (!ding || !ding.src) return;
+    if (!ding) return;
     try {
       ding.currentTime = 0;
       var pr = ding.play();
@@ -256,13 +168,13 @@
 
   function hint(show) { $('audioHint').classList.toggle('show', show); }
 
+  // Se il browser blocca comunque la riproduzione si avvisa a schermo, e al
+  // primo tocco o tasto premuto si riprova (allora il gesto c'e').
   ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
     window.addEventListener(ev, function () {
       if ($('audioHint').classList.contains('show')) kaching();
     }, { passive: true });
   });
-
-  renderSound();
 
   function connect() {
     var es = new EventSource('/events');

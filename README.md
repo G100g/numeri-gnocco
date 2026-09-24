@@ -22,8 +22,10 @@ apre una pagina e funziona, anche in piu' persone contemporaneamente.
     server.py              server HTTP + stream SSE (solo standard library)
     static/tv.html         pagina per la TV
     static/pad.html        pagina per lo smartphone
+    static/ding.wav        campanello di cassa, generato da tools/make-ding.py
     state.json             numeri esposti (creato al primo avvio)
     cad/                   supporto stampabile in 3D per il tablet
+    tools/make-ding.py     risintetizza static/ding.wav
     install/setup-pi.sh    installazione automatica sul Raspberry Pi
     install/               unit systemd, script kiosk, configurazione access point
 
@@ -159,11 +161,12 @@ uno al banco): tutte le pagine restano allineate in tempo reale.
 - Lo stato sopravvive al riavvio: e' salvato in `state.json`.
 - Se cade la rete, TV e telefono si riconnettono da soli e mostrano un avviso
   rosso finche' sono scollegati.
-- Il suono di cassa e' sintetizzato dalla pagina: nessun file audio da
-  caricare. Viene reso una volta all'apertura in un `OfflineAudioContext`, che
-  le policy autoplay non toccano, e riprodotto con un elemento `<audio>`: cosi'
-  sulla TV non serve nessun gesto dell'utente. Un `AudioContext` dal vivo
-  resterebbe sospeso per sempre, perche' la TV nessuno la tocca.
+- Il suono di cassa e' un file, `static/ding.wav`, riprodotto con un elemento
+  `<audio>`. La sintesi (colpo di cassetto piu' due "deng" con parziali
+  inarmoniche) sta in `tools/make-ding.py`: per cambiare il suono si modificano
+  i parametri la' e si rilancia lo script. Prima era sintetizzato nella pagina
+  con le Web Audio API, ma un `AudioContext` dal vivo resta sospeso finche' non
+  arriva un gesto dell'utente, e la TV nessuno la tocca.
 - Lo script kiosk passa i flag che sbloccano l'audio degli elementi media
   (`--media-playback-requires-user-gesture=false` per `cog`,
   `--autoplay-policy=no-user-gesture-required` per Chromium). Se manca uno dei
